@@ -12,11 +12,15 @@ use syn::{parse_file, Ident, Item, ItemFn, ReturnType, Type};
 
 use proc_macro2::Span;
 
-pub fn generate_bindings(
-	output_dir: &Path,
-	input_file: &Path,
-	libpath: &Path,
-) -> Result<(), Box<dyn Error>> {
+pub struct Options<'a> {
+	pub output_dir: &'a Path,
+	pub input_file: &'a Path,
+	pub lib_path: &'a Path,
+	pub package_name: String,
+	pub lib_class_name: String
+}
+
+pub fn generate_bindings(Options { input_file, output_dir, lib_path, lib_class_name, package_name}: Options) -> Result<(), Box<dyn Error>> {
 	let file = fs::read_to_string(input_file)?;
 	let ast = parse_file(&file)?;
 
@@ -35,9 +39,9 @@ pub fn generate_bindings(
 		}
 	}
 
-	finalize(state, libpath.to_str().unwrap())?;
+	finalize(state, lib_path.to_str().unwrap(), package_name, lib_class_name)?;
 
-	write_files(output_dir)?;
+	write_files(&output_dir)?;
 
 	Ok(())
 }
@@ -164,7 +168,7 @@ fn maybe_primitive_to_boxed(s: &str) -> &str {
 }
 
 // The real meat and potatos: write the files.
-fn finalize(state: State, libname: &str) -> Result<(), Box<dyn Error>> {
+fn finalize(state: State, libname: &str, package_name: String, class_name: String) -> Result<(), Box<dyn Error>> {
 	for ty in state.types {
 		let mut path = state.path.clone();
 		path.push(format!("{}.java", &ty));
@@ -182,7 +186,7 @@ import java.lang.foreign.MemorySegment;
 
 public class {0} {{
 	MemorySegment value;
-	
+
 	{0}(MemorySegment value) {{
 		this.value = value;
 	}}
@@ -192,7 +196,9 @@ public class {0} {{
 	}
 
 	let mut path = state.path;
-	path.push("RustFns.java");
+	fs::create_dir_all(path.join(package_name.replace(".", "/"))).expect("TODO: panic message");
+	path.push(package_name.replace(".", "/"));
+	path.push(format!("{class_name}.java"));
 	let mut file = fs::OpenOptions::new()
 		.create(true)
 		.truncate(true)
@@ -201,15 +207,16 @@ public class {0} {{
 
 	writeln!(
 		&mut file,
-		r"import java.lang.invoke.MethodHandle;
+		r"package {package_name};
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
+import java.lang.invoke.MethodHandle;
 
-public class RustFns {{
+public class {class_name} {{
 	static MethodHandle getHandle(Linker linker, SymbolLookup lookup, String symbol, FunctionDescriptor descriptor) throws Throwable {{
 	var addr = lookup.find(symbol).get();
 		return linker.downcallHandle(addr, descriptor);
